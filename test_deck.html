@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guardian Eye | Kaamchalau Test Deck</title>
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #00ff41;
+            font-family: 'Courier New', Courier, monospace;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            gap: 20px;
+        }
+        h2, h3 { color: #58a6ff; margin-top: 0; border-bottom: 1px solid #30363d; padding-bottom: 5px; }
+        .video-panel {
+            flex: 1;
+            background: #161b22;
+            padding: 15px;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+        }
+        .video-panel img {
+            width: 100%;
+            border: 2px solid #58a6ff;
+            border-radius: 4px;
+        }
+        .data-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .box {
+            background: #161b22;
+            padding: 15px;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            height: 200px;
+            overflow-y: auto;
+            font-size: 13px;
+            white-space: pre-wrap;
+        }
+        .alert-box { color: #ff7b72; border-color: #ff7b72; }
+    </style>
+</head>
+<body>
+
+    <div class="video-panel">
+        <h2>📷 Live Drone Feed (MJPEG)</h2>
+        <img id="videoStream" src="http://localhost:8000/api/stream/webcam" alt="Waiting for FastAPI video stream...">
+    </div>
+
+    <div class="data-panel">
+        <div class="box">
+            <h3>🎯 Persons Detected</h3>
+            <div id="personsData">Awaiting telemetry...</div>
+        </div>
+
+        <div class="box alert-box">
+            <h3>⚠️ Active Alerts</h3>
+            <div id="alertsData">Awaiting telemetry...</div>
+        </div>
+
+        <div class="box">
+            <h3>🚁 Landing Zones (LZ) & Env</h3>
+            <div id="lzData">Awaiting telemetry...</div>
+        </div>
+    </div>
+
+    <script>
+        // Connect to your FastAPI WebSocket endpoint
+        // Adjust the port/URL if your routers/stream.py uses a different path
+        const ws = new WebSocket("ws://localhost:8000/api/stream/ws");
+
+        ws.onopen = function() {
+            console.log("WebSocket connected to Guardian Eye Backend.");
+            document.getElementById("personsData").innerText = "Connection established. Waiting for frames...";
+        };
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            
+            // 1. Parse Persons (Check for Injury Status & Thermal)
+            if (data.persons && data.persons.length > 0) {
+                let pText = "";
+                data.persons.forEach(p => {
+                    let statusIcon = p.status.includes("INJURED") ? "🚨" : "🚶";
+                    pText += `${statusIcon} ID: ${p.person_id} | Status: ${p.status} | Heat: ${p.thermal_score}\n`;
+                    pText += `    GPS: [${p.gps_lat.toFixed(4)}, ${p.gps_lon.toFixed(4)}]\n\n`;
+                });
+                document.getElementById("personsData").innerText = pText;
+            } else {
+                document.getElementById("personsData").innerText = "No persons detected in current frame.";
+            }
+
+            // 2. Parse Alerts
+            if (data.alerts_fired && data.alerts_fired.length > 0) {
+                let aText = "";
+                data.alerts_fired.forEach(a => {
+                    aText += `[${a.timestamp}] ${a.level}: ${a.message}\n`;
+                });
+                document.getElementById("alertsData").innerText = aText;
+            } else {
+                document.getElementById("alertsData").innerText = "ALL CLEAR.";
+            }
+
+            // 3. Parse Landing Zones & Environment
+            let lzEnvText = `Visibility Score: ${data.environment?.visibility_score || "N/A"}\n`;
+            lzEnvText += `Flight Safety: ${data.environment?.safety_level || "N/A"}\n\n`;
+            
+            if (data.landing_zones && data.landing_zones.length > 0) {
+                data.landing_zones.forEach(lz => {
+                    lzEnvText += `✅ LZ Found: ${lz.lz_id} | Safety: ${lz.safety_score.toFixed(2)}\n`;
+                });
+            } else {
+                lzEnvText += "❌ No safe landing zones detected.";
+            }
+            document.getElementById("lzData").innerText = lzEnvText;
+        };
+
+        ws.onerror = function(error) {
+            document.getElementById("personsData").innerText = "WebSocket Error. Is FastAPI running?";
+        };
+    </script>
+</body>
+</html>

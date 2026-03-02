@@ -1,0 +1,20 @@
+# Guardian Eye — Backend Dependencies
+# Install: pip install -r requirements.txt
+
+# Core API
+fastapi==0.111.0
+uvicorn[standard]==0.30.0
+python-multipart==0.0.9
+
+# AI / Computer Vision
+ultralytics==8.2.0          # YOLOv8 + ByteTrack
+opencv-python==4.9.0.80
+torch==2.3.0                 # CPU-only: pip install torch --index-url https://download.pytorch.org/whl/cpu
+torchvision==0.18.0
+timm==0.9.16                 # MiDaS dependency
+Pillow==10.3.0
+numpy==1.26.4
+
+# Utilities
+python-dotenv==1.0.1
+aiofiles==23.2.1
