@@ -68,7 +68,6 @@ def process_frame(
     for det in detections:
         p_lat, p_lon = get_dummy_gps(seed=det.track_id)
 
-        # ---> NEW: Check if this person matches the VIP description
         is_vip = vip_tracker.check_vip_match(frame, det.bbox)
         if is_vip:
             det.status = "VIP TARGET ACQUIRED"
@@ -82,7 +81,6 @@ def process_frame(
             thermal_score=0.6,
         )
 
-        # If they were just flagged as VIP, update the store's status too
         if is_vip:
             person.status = "VIP TARGET ACQUIRED"
 
@@ -162,31 +160,32 @@ def process_frame(
 
     # ── 7. Environmental analysis (CPU SAVER) ─────────────────
     env_out: Dict[str, Any] = {}
+    raw_env_report = None  # <--- NEW: Stores the raw object for the alerts engine
 
     if run_heavy_modules:
-        env_report = analyze_environment(frame)
-        annotated_frame = annotate_env_frame(annotated_frame, env_report)
+        raw_env_report = analyze_environment(frame)
+        annotated_frame = annotate_env_frame(annotated_frame, raw_env_report)
 
         env_out = {
-            "laplacian_variance": env_report.laplacian_variance,
-            "contrast_score": env_report.contrast_score,
-            "brightness_mean": env_report.brightness_mean,
-            "brightness_ok": env_report.brightness_ok,
-            "noise_level": env_report.noise_level,
-            "fog_probability": env_report.fog_probability,
-            "rain_probability": env_report.rain_probability,
-            "smoke_probability": env_report.smoke_probability,
-            "visibility_score": env_report.visibility_score,
-            "overall_safety_score": env_report.overall_safety_score,
-            "safety_level": env_report.safety_level,
-            "conditions": env_report.conditions,
-            "recommendations": env_report.recommendations,
+            "laplacian_variance": raw_env_report.laplacian_variance,
+            "contrast_score": raw_env_report.contrast_score,
+            "brightness_mean": raw_env_report.brightness_mean,
+            "brightness_ok": raw_env_report.brightness_ok,
+            "noise_level": raw_env_report.noise_level,
+            "fog_probability": raw_env_report.fog_probability,
+            "rain_probability": raw_env_report.rain_probability,
+            "smoke_probability": raw_env_report.smoke_probability,
+            "visibility_score": raw_env_report.visibility_score,
+            "overall_safety_score": raw_env_report.overall_safety_score,
+            "safety_level": raw_env_report.safety_level,
+            "conditions": raw_env_report.conditions,
+            "recommendations": raw_env_report.recommendations,
         }
 
     # ── 8. Alerts ─────────────────────────────────────────────
     alerts_fired = process_alerts(
         detections=detections,
-        env_report=env_out if run_heavy_modules else None,
+        env_report=raw_env_report,  # <--- FIX: We now pass the raw object, not the dict
         frame_gps=(gps_lat, gps_lon),
         person_ids=person_ids,
     )
@@ -202,7 +201,6 @@ def process_frame(
         thermal_path   = f"{base}/frame_{frame_index:06d}_therm.jpg"
         depth_path     = f"{base}/frame_{frame_index:06d}_depth.jpg"
 
-        # ---> STUTTER FIX: Offload file writing to a background thread
         def save_to_disk():
             cv2.imwrite(annotated_path, annotated_frame)
             cv2.imwrite(thermal_path, thermal_frame)
@@ -226,7 +224,7 @@ def process_frame(
         gps_lat=gps_lat,
         gps_lon=gps_lon,
         person_count=len(detections),
-        annotated_path=annotated_path,
-        thermal_path=thermal_path,
-        depth_path=depth_path,
+        annotated_path=annotated_frame,
+        thermal_path=thermal_frame,
+        depth_path=depth_frame,
     )
