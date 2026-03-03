@@ -7,29 +7,31 @@ import asyncio
 import json
 import numpy as np
 from typing import AsyncGenerator
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Form
 from fastapi.responses import StreamingResponse
 
 from app.modules.pipeline import process_frame
-from app.modules.thermal import rgb_to_thermal
 from app.core.config import settings
 from app.core.logger import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)
 
-# Shared global state to prevent running the AI twice!
+# Shared global state
 _last_annotated: np.ndarray = None
 _last_thermal: np.ndarray = None
+_last_depth: np.ndarray = None
 _last_result = None
+_cap: cv2.VideoCapture = None
 
 
 def _open_camera() -> cv2.VideoCapture:
-    # Check if it's a number (webcam index) or a string (IP cam / mp4 file)
+    global _cap
     source = int(settings.VIDEO_SOURCE) if settings.VIDEO_SOURCE.isdigit() else settings.VIDEO_SOURCE
-    cap = cv2.VideoCapture(source)
-    cap.set(cv2.CAP_PROP_FPS, settings.STREAM_FPS)
-    return cap
+    _cap = cv2.VideoCapture(source)
+    _cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    _cap.set(cv2.CAP_PROP_FPS, settings.STREAM_FPS)
+    return _cap
 
 
 def _frame_to_jpeg(frame: np.ndarray) -> bytes:
@@ -37,10 +39,11 @@ def _frame_to_jpeg(frame: np.ndarray) -> bytes:
     return encoded.tobytes()
 
 
-async def _webcam_generator(mode: str = "annotated") -> AsyncGenerator[bytes, None]:
-    global _last_annotated, _last_thermal, _last_result
+async def _webcam_generator() -> AsyncGenerator[bytes, None]:
+    global _last_annotated, _last_thermal, _last_depth, _last_result
 
     cap = _open_camera()
+
     if not cap.isOpened():
         placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
         cv2.putText(placeholder, "NO CAMERA", (200, 240),
@@ -52,6 +55,7 @@ async def _webcam_generator(mode: str = "annotated") -> AsyncGenerator[bytes, No
         return
 
     frame_idx = 0
+
     try:
         while True:
             await asyncio.sleep(0.001)
@@ -60,41 +64,26 @@ async def _webcam_generator(mode: str = "annotated") -> AsyncGenerator[bytes, No
             if not ret:
                 break
 
-            # 1. Resize for edge performance
             frame = cv2.resize(frame, (640, 480))
 
-            # 2. Run master pipeline ONCE
+            # Run pipeline
             result = process_frame(
                 frame=frame,
                 frame_index=frame_idx,
-                run_depth=False,
+                run_depth=True,
                 job_id="live_stream",
             )
+
             _last_result = result
+            _last_annotated = result.annotated_path
+            _last_thermal = result.thermal_path
+            _last_depth = result.depth_path
 
-            # 3. Render visuals
-            from app.modules.detection import detector
-            detections = detector.detect(frame, use_tracking=True)
+            # Stream annotated by default
+            if _last_annotated is not None:
+                jpeg = _frame_to_jpeg(_last_annotated)
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
 
-            pid_map = {
-                d.track_id: p["person_id"]
-                for p in result.persons
-                for d in detections
-                if d.track_id == p.get("track_id")
-            }
-
-            annotated = detector.annotate_frame(frame, detections, pid_map)
-
-            from app.modules.environment import analyze_environment, annotate_env_frame
-            env = analyze_environment(frame)
-            annotated = annotate_env_frame(annotated, env)
-
-            thermal, _ = rgb_to_thermal(frame, detections)
-
-            output_frame = thermal if mode == "thermal" else annotated
-            jpeg = _frame_to_jpeg(output_frame)
-
-            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
             frame_idx += 1
 
     finally:
@@ -104,29 +93,69 @@ async def _webcam_generator(mode: str = "annotated") -> AsyncGenerator[bytes, No
 @router.get("/webcam")
 async def webcam_stream():
     return StreamingResponse(
-        _webcam_generator(mode="annotated"),
+        _webcam_generator(),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
 
 @router.get("/thermal")
-async def thermal_stream():
+async def video_feed_thermal():
+    """Streams the Inferno Thermal map"""
+    async def _gen():
+        global _last_thermal
+        while True:
+            if _last_thermal is not None:
+                _, buffer = cv2.imencode('.jpg', _last_thermal)
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' +
+                       buffer.tobytes() + b'\r\n')
+            await asyncio.sleep(0.05)
+
     return StreamingResponse(
-        _webcam_generator(mode="thermal"),
+        _gen(),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
 
-# ── WebSocket (Now 100x Lighter) ─────────────────────────
+@router.get("/depth")
+async def video_feed_depth():
+    """Streams the MiDaS Ghost Depth map"""
+    async def _gen():
+        global _last_depth
+        while True:
+            if _last_depth is not None:
+                _, buffer = cv2.imencode('.jpg', _last_depth)
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' +
+                       buffer.tobytes() + b'\r\n')
+            await asyncio.sleep(0.05)
+
+    return StreamingResponse(
+        _gen(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@router.post("/source")
+async def change_video_source(source: str = Form(...)):
+    """Dynamically switch between Webcam, Phone, or Video file"""
+    global _cap
+    settings.VIDEO_SOURCE = source
+
+    if _cap is not None:
+        _cap.release()
+
+    src = int(source) if source.isdigit() else source
+    _cap = cv2.VideoCapture(src)
+    _cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    return {"status": "success", "new_source": source}
+
+
+# ── WebSocket ─────────────────────────
 @router.websocket("/ws")
 async def websocket_stream(websocket: WebSocket):
-    """
-    WebSocket endpoint.
-    It no longer runs the AI. It just broadcasts the _last_result
-    generated by the webcam stream.
-    """
     await websocket.accept()
     logger.info("WebSocket client connected")
+
     global _last_result
 
     try:
