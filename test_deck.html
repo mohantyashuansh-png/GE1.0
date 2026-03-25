@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GUARDIAN EYE | Tactical Command</title>
+<style>
+body { background-color: #050505; color: #0f0; font-family: 'Courier New', Courier, monospace; margin: 0; padding: 20px; }
+h2, h3 { margin-top: 0; color: #0f0; text-transform: uppercase; border-bottom: 1px solid #0f0; padding-bottom: 5px; }
+.grid-container { display: flex; gap: 20px; align-items: flex-start; }
+.panel { background: #111; border: 1px solid #0f0; padding: 15px; box-shadow: 0 0 10px rgba(0,255,0,0.1); }
+.btn { display:block; width:100%; background:#0f0; color:#000; border:none; padding:10px; margin-bottom:10px; font-weight:bold; cursor:pointer; }
+.btn:hover { background:#0c0; }
+.btn-danger { background:#ff3333; color:#fff; }
+.btn-action { background:#00ccff; color:#000; }
+.btn-vision { background:#333; color:#0f0; border:1px solid #0f0; display:inline-block; width:32%; padding:5px; font-size:12px;}
+.btn-vision:hover { background:#555; }
+#timelineBox { height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:5px; font-size:13px; background:#000; padding:10px; border:1px dotted #555; }
+.log-CRITICAL { color:#ff3333; font-weight:bold; }
+.log-WARNING { color:#ffaa00; }
+.log-INFO { color:#0f0; }
+.log-DETECTION { color:#00ccff; }
+</style>
+</head>
+<body onload="switchOptics('webcam')">
+
+<h2>🚁 GUARDIAN EYE - EDGE COMMAND DECK</h2>
+
+<div class="grid-container">
+    <div class="panel" style="width:250px;">
+        <h3>Mission Setup</h3>
+        <button class="btn" onclick="setVideoSource('0')">💻 USE PC WEBCAM</button>
+        <div style="display:flex;gap:5px;margin-bottom:10px;">
+            <input type="text" id="ipSource" placeholder="http://192.168.x.x/video" style="flex-grow:1;background:#000;color:#0f0;border:1px solid #0f0;padding:5px;">
+            <button class="btn" style="width:auto;margin:0;padding:5px;" onclick="setVideoSource(document.getElementById('ipSource').value)">CONNECT</button>
+        </div>
+        <label class="btn" style="cursor:pointer;text-align:center;">
+            📁 UPLOAD DRONE FEED
+            <input type="file" style="display:none" accept="video/mp4" onchange="uploadVideo(event)">
+        </label>
+
+        <h3 style="margin-top: 20px;">Moondream VLM (Offline)</h3>
+        <button class="btn btn-action" onclick="scanHazards()">🌍 SCAN HAZARDS</button>
+        <button class="btn btn-action" onclick="runTriage()" style="background:#ffaa00;">🏥 TRIAGE VICTIM</button>
+
+        <div style="background:#222;padding:10px;margin-top:10px;border:1px solid #00ccff;">
+            <p style="margin:0 0 5px 0;color:#00ccff;font-size:12px;">VIP HUNTER</p>
+            <input type="text" id="vipTop" placeholder="Shirt Color" style="width:90%;margin-bottom:5px;background:#000;color:#0f0;border:1px solid #555;">
+            <input type="text" id="vipBottom" placeholder="Pants Color" style="width:90%;margin-bottom:5px;background:#000;color:#0f0;border:1px solid #555;">
+            <button class="btn btn-action" onclick="setVIP()" style="margin:0; background:#00ccff; color:#000;">TEXT LOCK (LLAMA)</button>
+            <button class="btn btn-action" onclick="autoKmeansLock()" style="margin-top:5px; background:#cc00ff; color:#fff;">🎯 AUTO-EXTRACT (K-MEANS)</button>
+        </div>
+
+        <p>Survivors Found: <b id="survivorCount" style="font-size:1.5em;color:#0f0;">0</b></p>
+        <button class="btn btn-danger" onclick="finishMission()">🛑 END MISSION & EXPORT</button>
+    </div>
+
+    <div class="panel" style="flex-grow:1;text-align:center;">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #0f0;padding-bottom:5px;margin-bottom:10px;">
+            <h3 style="margin:0;border:none;">Tactical Optics</h3>
+            <div>
+                <button class="btn-vision" onclick="switchOptics('webcam')">OPTICAL</button>
+                <button class="btn-vision" onclick="switchOptics('thermal')" style="color:#ffaa00;border-color:#ffaa00;">THERMAL</button>
+                <button class="btn-vision" onclick="switchOptics('depth')" style="color:#00ccff;border-color:#00ccff;">3D DEPTH</button>
+            </div>
+        </div>
+        
+        <div id="triageBoard" style="background:#001100; border:1px solid #ffaa00; padding:10px; margin-bottom:10px; display:flex; gap:10px; overflow-x:auto; min-height:40px;">
+            <span style="color:#ffaa00; font-weight:bold; padding-top:2px;">LIVE TRIAGE:</span>
+        </div>
+
+        <img id="videoFeed" src="" style="width:100%;max-width:800px;border:2px solid #333;min-height:450px;background:#000;">
+    </div>
+
+    <div class="panel" style="width:350px;">
+        <h3>Tactical Radar</h3>
+        <canvas id="radarCanvas" width="300" height="300" style="background:#001100;border:2px solid #0f0;border-radius:50%;display:block;margin:0 auto;"></canvas>
+        <h3 style="margin-top: 20px;">Environment Status</h3>
+        <div id="envBox" style="background: #000; padding: 10px; border: 1px dotted #555; font-size: 14px; transition: 0.3s;">
+            <p style="margin: 0;">Status: <strong id="envStatus">UNKNOWN</strong></p>
+            <p style="margin: 5px 0 0 0;">Visibility: <span id="visScore">0</span>%</p>
+            <p style="margin: 5px 0 0 0;">Conditions: <span id="envCond">Clear</span></p>
+        </div>
+        <h3 style="margin-top:20px;">Mission Timeline</h3>
+        <div id="timelineBox">
+            <div class="log-INFO">[SYSTEM] Guardian Eye OS Initialized.</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid-container" style="margin-top:20px;">
+    <div class="panel" style="flex:1;border-color:#cc00ff;">
+        <h3 style="color:#cc00ff;border-color:#cc00ff;">VIP Tracker Intel</h3>
+        <div id="vipOutput" style="font-size: 13px; color: #aaa; min-height: 80px;">Awaiting VIP Lock...</div>
+    </div>
+    <div class="panel" style="flex:1;border-color:#00ccff;">
+        <h3 style="color:#00ccff;border-color:#00ccff;">Hazard Analysis</h3>
+        <div id="hazardOutput" style="font-size: 13px; color: #aaa; min-height: 80px;">Awaiting Moondream Scan...</div>
+    </div>
+    <div class="panel" style="flex:1;border-color:#ffaa00;">
+        <h3 style="color:#ffaa00;border-color:#ffaa00;">Victim Triage</h3>
+        <div id="triageOutput" style="font-size: 13px; color: #aaa; min-height: 80px;">Awaiting Triage Request...</div>
+    </div>
+</div>
+
+<script>
+// 1. VIDEO SOURCE LOGIC
+function switchOptics(mode) {
+    document.getElementById("videoFeed").src = "/api/stream/" + mode + "?" + new Date().getTime();
+}
+async function setVideoSource(sourceValue) {
+    if(!sourceValue) return;
+    const formData = new FormData(); formData.append("source", sourceValue);
+    try { await fetch("/api/stream/source", { method: "POST", body: formData }); } catch(e) { console.log(e); }
+    switchOptics('webcam');
+}
+async function uploadVideo(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const formData = new FormData(); formData.append("file", file);
+    await fetch("/api/stream/upload_video", { method: "POST", body: formData });
+    switchOptics('webcam');
+}
+
+// 2. WEBSOCKET LOGIC 
+const wsUrl = `ws://${window.location.host}/api/stream/ws`;
+const ws = new WebSocket(wsUrl);
+
+ws.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+
+    if (data.persons) {
+        document.getElementById("survivorCount").innerText = data.persons.length;
+        updateRadar(data.persons); 
+        
+        // 🚀 UPDATE THE TRIAGE LEADERBOARD
+        const triageBoard = document.getElementById("triageBoard");
+        let triageHTML = `<span style="color:#ffaa00; font-weight:bold; padding-top:2px;">LIVE TRIAGE:</span>`;
+        
+        if (data.persons.length === 0) {
+            triageHTML += `<span style="color:#555;">No subjects detected.</span>`;
+        } else {
+            data.persons.forEach((p, index) => {
+                let badgeColor = index === 0 && p.triage_score > 50 ? "#ff3333" : "#00ff00";
+                triageHTML += `<div style="background:#222; border:1px solid ${badgeColor}; padding:2px 8px; font-size:12px; border-radius:3px;">
+                    <strong style="color:${badgeColor}">${p.person_id}</strong> | Score: ${p.triage_score}
+                </div>`;
+            });
+        }
+        triageBoard.innerHTML = triageHTML;
+    }
+
+    if (data.environment && data.environment.safety_level) {
+        const envEl = document.getElementById("envStatus");
+        const envBox = document.getElementById("envBox");
+        envEl.innerText = data.environment.safety_level;
+        document.getElementById("visScore").innerText = data.environment.visibility_score || 0;
+        document.getElementById("envCond").innerText = data.environment.conditions || "None";
+        if (data.environment.safety_level === "EMERGENCY") {
+            envBox.style.backgroundColor = "#550000"; envEl.style.color = "#ff3333";
+        } else if (data.environment.safety_level === "CAUTION") {
+            envBox.style.backgroundColor = "#333300"; envEl.style.color = "#ffff00";
+        } else {
+            envBox.style.backgroundColor = "#000000"; envEl.style.color = "#00ff00";
+        }
+    }
+
+    if (data.timeline && data.timeline.length > 0) {
+        const timelineBox = document.getElementById("timelineBox");
+        timelineBox.innerHTML = ""; 
+        data.timeline.forEach(log => {
+            const cssClass = `log-${log.type}`; 
+            timelineBox.innerHTML += `<div class="${cssClass}">[${log.time}] ${log.event}</div>`;
+        });
+        timelineBox.scrollTop = timelineBox.scrollHeight;
+    }
+
+    if (data.vip_active !== undefined) {
+        const vipOut = document.getElementById("vipOutput");
+        if (vipOut.innerText.includes("Locked") || vipOut.innerText.includes("Extracted")) {
+            const baseText = vipOut.innerText.split("\n\n>>>")[0]; 
+            if (data.vip_active) {
+                vipOut.innerText = baseText + "\n\n>>> LIVE STATUS: VIP DETECTED IN SECTOR";
+                vipOut.style.color = "#cc00ff";
+            } else {
+                vipOut.innerText = baseText + "\n\n>>> LIVE STATUS: NO VIP MATCH FOUND";
+                vipOut.style.color = "#ffaa00";
+            }
+        }
+    }
+};
+
+// 3. RADAR LOGIC
+function updateRadar(persons){
+    const canvas=document.getElementById("radarCanvas");
+    const ctx=canvas.getContext("2d");
+    const width=canvas.width; const height=canvas.height;
+    const centerX=width/2; const centerY=height/2;
+
+    ctx.clearRect(0,0,width,height);
+    ctx.strokeStyle="rgba(0,255,0,0.3)";
+    ctx.beginPath();
+    ctx.moveTo(centerX,0); ctx.lineTo(centerX,height);
+    ctx.moveTo(0,centerY); ctx.lineTo(width,centerY);
+    ctx.arc(centerX,centerY,width/4,0,2*Math.PI);
+    ctx.arc(centerX,centerY,width/2-2,0,2*Math.PI);
+    ctx.stroke();
+
+    ctx.fillStyle="#ffff00"; ctx.beginPath(); ctx.arc(centerX,centerY,6,0,2*Math.PI); ctx.fill();
+
+    persons.forEach(p=>{
+        const status = p.status ? p.status.toUpperCase() : "STANDING";
+        let color="#00ff00";
+        if(status.includes("VIP")){
+            if(status.includes("INJURED")||status.includes("LYING")) color="#ffaa00";
+            else color="#cc00ff";
+        } else if(status.includes("INJURED")||status.includes("LYING")){
+            color="#ff3333";
+        }
+
+        ctx.fillStyle=color;
+        let mapX = centerX; let mapY = centerY - 50;
+        
+        if (p.center && p.center.length === 2) {
+            mapX = (p.center[0] / 640) * width;
+            mapY = (p.center[1] / 480) * height;
+        } else if (p.track_id !== undefined) {
+            mapX = centerX + (p.track_id * 15) % 100;
+        }
+        ctx.beginPath(); ctx.arc(mapX,mapY,6,0,2*Math.PI); ctx.fill();
+    });
+}
+
+// 4. MOONDREAM VLM AGENTS
+async function scanHazards() {
+    const out = document.getElementById("hazardOutput"); out.innerText = "VLM Loading... (This may take 30-45s)"; out.style.color = "#00ccff";
+    try { const res = await fetch("/api/stream/vlm/hazard", { method: "POST" }); const data = await res.json(); out.innerText = data.response; out.style.color = "#fff"; } 
+    catch (e) { out.innerText = "Timeout Error. Is Ollama running?"; }
+}
+async function runTriage() {
+    const out = document.getElementById("triageOutput"); out.innerText = "VLM Analyzing injuries... Please wait."; out.style.color = "#ffaa00";
+    const formData = new FormData(); formData.append("person_id", "P-0001"); 
+    try { const res = await fetch("/api/stream/vlm/triage", { method: "POST", body: formData }); const data = await res.json(); out.innerText = data.response; out.style.color = "#fff"; } 
+    catch (e) { out.innerText = "Timeout Error. Is Ollama running?"; }
+}
+
+// 5. VIP TRACKERS
+async function setVIP() {
+    const topColor = document.getElementById("vipTop").value || "none"; const bottomColor = document.getElementById("vipBottom").value || "none";
+    const out = document.getElementById("vipOutput"); out.innerText = "LLM computing mathematical target vectors... Please wait."; out.style.color = "#cc00ff";
+    const formData = new FormData(); formData.append("top_color", topColor); formData.append("bottom_color", bottomColor);
+    try {
+        const res = await fetch("/api/stream/vlm/vip", { method: "POST", body: formData }); const data = await res.json();
+        out.innerText = `[LLM TARGET LOCKED]\nTarget Profile: ${topColor} / ${bottomColor}\n\nSystem Data:\n${data.status}`; out.style.color = "#0f0";
+    } catch (e) { out.innerText = "Timeout Error. Is Ollama running?"; }
+}
+async function autoKmeansLock() {
+    const out = document.getElementById("vipOutput"); out.innerText = "Calibrating K-Means sensor to center frame... DO NOT MOVE."; out.style.color = "#cc00ff";
+    try {
+        const res = await fetch("/api/stream/vlm/kmeans_lock", { method: "POST" }); const data = await res.json();
+        out.innerText = `[VISUAL TARGET LOCKED]\n\nSystem Data:\n${data.status}`; out.style.color = "#0f0";
+    } catch (e) { out.innerText = "Calibration Error."; }
+}
+
+// 6. MISSION CONTROL
+async function finishMission(){
+    if(!confirm("Terminate Mission and Generate Tactical Report?")) return;
+    await fetch("/api/stream/terminate",{method:"POST"});
+    window.open("/api/stream/download_report","_blank");
+}
+</script>
+</body>
+</html>
