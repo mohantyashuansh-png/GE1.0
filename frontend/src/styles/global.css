@@ -1,8 +1,20 @@
+/* 🌌 GLOBAL BACKGROUND */
 body {
   margin: 0;
   background: #050505;
   color: #00ff00;
   font-family: 'JetBrains Mono', monospace;
+
+  /* GRID */
+  background-image: 
+    linear-gradient(rgba(0,255,0,0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,255,0,0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* APP */
+.app {
+  min-height: 100vh;
 }
 
 /* HEADER */
@@ -10,9 +22,11 @@ body {
   padding: 10px;
   border-bottom: 2px solid #00ff00;
   font-size: 18px;
+  letter-spacing: 2px;
+  text-shadow: 0 0 5px #00ff00;
 }
 
-/* LAYOUT */
+/* GRID LAYOUT */
 .top-section {
   display: grid;
   grid-template-columns: 1fr 2fr 1fr;
@@ -27,16 +41,61 @@ body {
   padding: 10px;
 }
 
-/* PANELS */
+/* 🧩 PANELS (GOTHAM STYLE) */
 .panel {
   border: 1px solid #00ff00;
   padding: 10px;
-  box-shadow: 0 0 10px #00ff00;
+  background: #0a0a0a;
+
+  /* 🔥 REAL GLOW */
+  box-shadow: 
+    0 0 5px #00ff00,
+    0 0 10px rgba(0,255,0,0.5),
+    inset 0 0 5px rgba(0,255,0,0.3);
+
+  position: relative;
+  overflow: hidden;
 }
 
+/* ✨ PANEL SCAN EFFECT */
+.panel::after {
+  content: "";
+  position: absolute;
+  width: 100%;
+  height: 2px;
+  background: rgba(0,255,0,0.3);
+  top: 0;
+  left: 0;
+  animation: scan 3s linear infinite;
+}
+
+@keyframes scan {
+  0% { top: 0; }
+  100% { top: 100%; }
+}
+
+/* PANEL TITLE */
 .panel-title {
   border-bottom: 1px solid #00ff00;
   margin-bottom: 10px;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+/* INPUT */
+input {
+  background: black;
+  color: #00ff00;
+  border: 1px solid #00ff00;
+  padding: 6px;
+  margin: 5px 0;
+  width: 100%;
+  outline: none;
+}
+
+input:focus {
+  box-shadow: 0 0 8px #00ff00;
 }
 
 /* BUTTONS */
@@ -48,15 +107,23 @@ body {
   border: none;
   cursor: pointer;
   font-weight: bold;
+  transition: all 0.2s ease;
 }
 
+/* 🎯 BUTTON COLORS */
 .green { background: #00ff00; color: black; }
-.blue { background: #00bcd4; }
-.orange { background: #ffaa00; }
-.red { background: #ff3333; }
-.purple { background: #cc00ff; }
+.blue { background: #00bcd4; color: black; }
+.orange { background: #ffaa00; color: black; }
+.red { background: #ff3333; color: black; }
+.purple { background: #cc00ff; color: black; }
 
-/* TERMINAL BOX */
+/* 🔥 HOVER EFFECT */
+.btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 15px #00ff00;
+}
+
+/* TERMINAL */
 .terminal {
   background: black;
   border: 1px solid #00ff00;
@@ -64,4 +131,16 @@ body {
   height: 120px;
   overflow-y: auto;
   font-size: 12px;
+  font-family: monospace;
+}
+
+/* 🚨 ALERT EFFECT */
+.alert-emergency {
+  animation: pulseRed 1s infinite;
+}
+
+@keyframes pulseRed {
+  0% { box-shadow: 0 0 5px red; }
+  50% { box-shadow: 0 0 20px red; }
+  100% { box-shadow: 0 0 5px red; }
 }
