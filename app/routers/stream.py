@@ -309,17 +309,56 @@ Output exactly ONE raw JSON dictionary. No talking."""
     return {"status": f"Agentic Target Locked!\nTop Math: {top_hsv}\nBottom Math: {bottom_hsv}"}
 
 # ─────────────────────────────────────────
-# 🚀 K-MEANS VIP AUTO LOCK (PRECISION PATCH)
-# ─────────────────────────────────────────
-# ─────────────────────────────────────────
-# 🚀 K-MEANS VIP AUTO LOCK (CHEST-ONLY PATCH)
+# 🚀 SMART YOLO-GUIDED K-MEANS VIP LOCK
 # ─────────────────────────────────────────
 @router.post("/vlm/kmeans_lock")
 async def kmeans_lock():
     global _latest_raw_frame
     if _latest_raw_frame is None: 
-        return {"status": "Error: No camera feed available for extraction."}
+        return {"status": "Error: No camera feed available."}
 
+    # 1. Ask the AI (YOLO) if there are any humans on screen right now
+    if not store.persons:
+        return {"status": "Error: No humans detected to lock onto!"}
+
+    # 2. Find the person closest to the center of the screen
+    h, w, _ = _latest_raw_frame.shape
+    screen_center_x, screen_center_y = w / 2, h / 2
+
+    best_person = None
+    min_dist = float('inf')
+
+    for person_id, p in store.persons.items():
+        # Check if they have been seen in the last 2 seconds
+        import time
+        if time.time() - p.last_seen_epoch > 2.0:
+            continue
+            
+        dist = (p.x - screen_center_x)**2 + (p.y - screen_center_y)**2
+        if dist < min_dist:
+            min_dist = dist
+            best_person = p
+
+    if best_person is None or not hasattr(best_person, 'bbox'):
+        return {"status": "Error: Could not isolate a target."}
+
+    # 3. Get their exact YOLO Bounding Box!
+    x1, y1, x2, y2 = map(int, best_person.bbox)
+
+    # 4. Crop the frame to JUST their torso
+    box_h = y2 - y1
+    box_w = x2 - x1
+    
+    # 🚀 Move the crop further down (40% down) to completely avoid the neck/face!
+    crop_y1 = max(0, int(y1 + box_h * 0.4)) 
+    crop_y2 = min(h, int(y2 - box_h * 0.2)) 
+    # 🚀 Changed from 0.40 back to 0.25 so it sees your shoulders, not just the dot!
+    crop_x1 = max(0, int(x1 + box_w * 0.25))
+    crop_x2 = min(w, int(x2 - box_w * 0.25))
+
+    torso_crop = _latest_raw_frame[crop_y1:crop_y2, crop_x1:crop_x2]
+
+    # 5. Run the K-Means Math
     def get_dominant_hsv(image_crop, k=3):
         if image_crop is None or image_crop.size == 0: return None
         hsv = cv2.cvtColor(image_crop, cv2.COLOR_BGR2HSV)
@@ -327,28 +366,22 @@ async def kmeans_lock():
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
         _, labels, centers = cv2.kmeans(pixels, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
         dominant = centers[np.argmax(np.bincount(labels.flatten()))]
-        h, s, v = dominant
+        hue, sat, val = dominant
         
-        # Tighter Hue (+/- 10) so colors don't bleed. Wide Sat/Val for shadows.
-        lower = [max(0, int(h - 10)), max(0, int(s - 60)), max(0, int(v - 60))]
-        upper = [min(179, int(h + 10)), min(255, int(s + 60)), min(255, int(v + 60))]
+        # 🚀 Expanded Hue tolerance to +/- 20 for low-light webcams
+        lower = [max(0, int(hue - 20)), 15, 15]
+        upper = [min(179, int(hue + 20)), 255, 255]
         return {"lower": lower, "upper": upper}
 
-    h, w, _ = _latest_raw_frame.shape
-    
-    # 🚀 THE CHEST & LEGS TARGETING
-    # Top crop (Shirt): Starts exactly at 45% down the screen, stops at 70%. Guarantees it misses the chin.
-    top_crop = _latest_raw_frame[int(h * 0.45):int(h * 0.70), int(w * 0.35):int(w * 0.65)]
-    
-    # Bottom crop (Pants): Starts at 70% down the screen, stops at 95%.
-    bottom_crop = _latest_raw_frame[int(h * 0.70):int(h * 0.95), int(w * 0.35):int(w * 0.65)]
+    shirt_math = get_dominant_hsv(torso_crop)
 
-    top_math = get_dominant_hsv(top_crop)
-    bottom_math = get_dominant_hsv(bottom_crop)
+    if shirt_math is None:
+        return {"status": "Error: Math extraction failed on bounding box."}
 
-    vip_tracker.set_dynamic_target(top_math, bottom_math)
+    # Apply the lock
+    vip_tracker.set_dynamic_target(top_hsv=shirt_math, bottom_hsv=shirt_math)
 
-    return {"status": f"K-Means Target Extracted!\nTop Math: {top_math}\nBottom Math: {bottom_math}"}
+    return {"status": f"Target Acquired via YOLO!\nUnified Target Math: {shirt_math}"}
 @router.get("/download_report")
 async def download_report():
     global _last_env

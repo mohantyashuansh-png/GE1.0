@@ -34,7 +34,7 @@ class VIPTracker:
         
         # 🚀 THE STICKY LOCK: Dropped to 5% to survive YOLO box breathing!
         match_ratio = cv2.countNonZero(mask) / (img_crop.shape[0] * img_crop.shape[1] + 1e-6)
-        return match_ratio > 0.15
+        return match_ratio > 0.05  # The 5% Drone Fix
 
     def check_vip_match(self, frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> bool:
         """Slices the person in half and checks dynamic bounds."""
