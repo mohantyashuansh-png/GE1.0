@@ -8,7 +8,8 @@ import math
 import numpy as np
 import time
 import os
-import threading
+import sqlite3
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
@@ -24,7 +25,54 @@ from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+# ─────────────────────────────────────────
+# 📦 DB PATH
+# ─────────────────────────────────────────
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "..", "db", "missions.db")
 
+# prevent DB spam (important)
+_last_saved_track = {}
+
+# ─────────────────────────────────────────
+# 💾 SAVE TO DATABASE
+# ─────────────────────────────────────────
+def save_detection_to_db(track_id, posture, score, sector="Nagpur-Main"):
+    try:
+        global _last_saved_track
+
+        now = time.time()
+
+        # cooldown (2 sec per track)
+        if track_id in _last_saved_track:
+            if now - _last_saved_track[track_id] < 2:
+                return
+
+        _last_saved_track[track_id] = now
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor.execute(
+            """
+            INSERT INTO telemetry (timestamp, posture, score, sector)
+            VALUES (?, ?, ?, ?)
+            """,
+            (timestamp, posture, score, sector)
+        )
+
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        logger.error(f"DB Save Error: {e}")
+
+
+# ─────────────────────────────────────────
+# 📊 FRAME RESULT
+# ─────────────────────────────────────────
 @dataclass
 class FrameResult:
     frame_index: int
@@ -42,13 +90,12 @@ class FrameResult:
     depth_frame: Optional[np.ndarray] = None
 
 
+# ─────────────────────────────────────────
+# 🧠 POSTURE ANALYSIS
+# ─────────────────────────────────────────
 def analyze_skeletal_posture(keypoints_array):
-    """
-    Calculates the spine angle using trigonometry on YOLOv8-Pose keypoints.
-    COCO Keypoint Indices: 5=Left Shoulder, 6=Right Shoulder, 11=Left Hip, 12=Right Hip
-    """
     try:
-        if (keypoints_array[5][2] < 0.3 or keypoints_array[6][2] < 0.3 or 
+        if (keypoints_array[5][2] < 0.3 or keypoints_array[6][2] < 0.3 or
             keypoints_array[11][2] < 0.3 or keypoints_array[12][2] < 0.3):
             return None
 
@@ -57,10 +104,10 @@ def analyze_skeletal_posture(keypoints_array):
         lh_x, lh_y = keypoints_array[11][:2]
         rh_x, rh_y = keypoints_array[12][:2]
 
-        mid_shoulder_x = (ls_x + rs_x) / 2.0
-        mid_shoulder_y = (ls_y + rs_y) / 2.0
-        mid_hip_x = (lh_x + rh_x) / 2.0
-        mid_hip_y = (lh_y + rh_y) / 2.0
+        mid_shoulder_x = (ls_x + rs_x) / 2
+        mid_shoulder_y = (ls_y + rs_y) / 2
+        mid_hip_x = (lh_x + rh_x) / 2
+        mid_hip_y = (lh_y + rh_y) / 2
 
         dx = abs(mid_shoulder_x - mid_hip_x)
         dy = abs(mid_shoulder_y - mid_hip_y)
@@ -68,19 +115,22 @@ def analyze_skeletal_posture(keypoints_array):
         if dy == 0:
             return "LYING DOWN / INJURED"
 
-        angle_from_vertical = math.degrees(math.atan(dx / dy))
+        angle = math.degrees(math.atan(dx / dy))
 
-        if angle_from_vertical < 35:
+        if angle < 35:
             return "STANDING"
-        elif angle_from_vertical < 65:
+        elif angle < 65:
             return "SLUMPED / INJURED"
         else:
             return "LYING DOWN / INJURED"
 
-    except Exception:
+    except:
         return None
 
 
+# ─────────────────────────────────────────
+# 🚀 MAIN PIPELINE
+# ─────────────────────────────────────────
 def process_frame(
     frame: np.ndarray,
     frame_index: int = 0,
@@ -91,8 +141,6 @@ def process_frame(
 ) -> FrameResult:
 
     t0 = time.time()
-
-    from datetime import datetime
     ts = datetime.utcnow().isoformat()
 
     gps_lat, gps_lon = get_gps_from_frame_index(frame_index, total_frames)
@@ -102,7 +150,11 @@ def process_frame(
     person_ids: Dict[int, str] = {}
     persons_out: List[Dict] = []
 
+    # ─────────────────────────────
+    # PERSON LOOP
+    # ─────────────────────────────
     for det in detections:
+
         x1, y1, x2, y2 = det.bbox
         center_x = int((x1 + x2) / 2)
         center_y = int((y1 + y2) / 2)
@@ -111,34 +163,30 @@ def process_frame(
 
         is_vip = vip_tracker.check_vip_match(frame, det.bbox)
 
-        # 1. Default fallback (The old way: Bounding Box Ratio)
         w = x2 - x1
         h = y2 - y1
+
         posture_status = "LYING DOWN / INJURED" if w > (h * 1.2) else "STANDING"
 
-        # 2. 🚀 The Advanced Skeletal Override (The new way: Spine Angle)
-        if hasattr(det, "keypoints") and det.keypoints is not None and len(det.keypoints) > 0:
-            skeletal_status = analyze_skeletal_posture(det.keypoints[0].cpu().numpy())
+        if hasattr(det, "keypoints") and det.keypoints is not None:
+            sk = analyze_skeletal_posture(det.keypoints[0].cpu().numpy())
+            if sk:
+                posture_status = sk
 
-            if skeletal_status is not None:
-                posture_status = skeletal_status
-
-        # 3. Apply VIP Status safely
+        # VIP tag
         if is_vip:
             det.status = f"VIP | {posture_status}"
         else:
             det.status = posture_status
 
         priority_score = 10
-
-        if "INJURED" in posture_status.upper() or "LYING" in posture_status.upper():
+        if "INJURED" in posture_status or "LYING" in posture_status:
             priority_score += 50
 
-        if det.track_id not in store.track_to_pid:
-            store.log_timeline_event(
-                f"New survivor tracked: ID P-{det.track_id}",
-                "DETECTION"
-            )
+        # ─────────────────────────────
+        # 💾 DB SAVE (FIXED + SAFE)
+        # ─────────────────────────────
+        save_detection_to_db(det.track_id, posture_status, priority_score)
 
         person = store.get_or_create_person(
             track_id=det.track_id,
@@ -149,32 +197,11 @@ def process_frame(
             thermal_score=0.6,
         )
 
-        person.last_seen_epoch = time.time()
-
-        old_posture = person.status
-
-        if old_posture == "Standing" and posture_status == "Lying Down / Injured":
-            store.log_timeline_event(
-                f"CRITICAL: ID {person.person_id} has collapsed!",
-                "CRITICAL"
-            )
-
-        if is_vip:
-            person.status = f"VIP | {posture_status}"
-        else:
-            person.status = posture_status
-
+        person.status = posture_status
         person.x = center_x
         person.y = center_y
         person.priority_score = priority_score
         person.is_critical = priority_score >= 50
-
-        if person.is_critical and not getattr(person, "was_critical", False):
-            store.log_timeline_event(
-                f"CRITICAL: ID {person.person_id} flagged as high priority!",
-                "CRITICAL"
-            )
-            person.was_critical = True
 
         person_ids[det.track_id] = person.person_id
 
@@ -188,95 +215,63 @@ def process_frame(
             "gps_lon": p_lon,
             "priority_score": priority_score,
             "is_critical": person.is_critical,
-            "first_seen": person.first_seen,
-            "last_seen": person.last_seen,
-            "frame_count": person.frame_count,
             "status": person.status,
         })
 
+    # ─────────────────────────────
+    # FRAME RENDER
+    # ─────────────────────────────
     annotated_frame = detector.annotate_frame(frame, detections, person_ids)
 
-    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(8, 8))
-    high_contrast = clahe.apply(gray_frame)
+    high = clahe.apply(gray)
+    thermal_frame = cv2.applyColorMap((high // 64) * 64, cv2.COLORMAP_JET)
 
-    quantized_gray = (high_contrast // 64) * 64
-    thermal_frame = cv2.applyColorMap(quantized_gray, cv2.COLORMAP_JET)
-
-    for det in detections:
-        x1, y1, x2, y2 = map(int, det.bbox)
-        cv2.rectangle(thermal_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-    lz_out: List[Dict] = []
+    lz_out = []
     depth_frame = frame.copy()
 
-    run_heavy_modules = (frame_index % settings.FRAME_SKIP_RATE == 0)
+    run_heavy = (frame_index % settings.FRAME_SKIP_RATE == 0)
 
-    if run_depth and run_heavy_modules:
+    if run_depth and run_heavy:
         depth_map = depth_analyzer.estimate_depth(frame)
 
         if depth_map is not None:
-            zones: List[LandingZoneCandidate] = depth_analyzer.find_landing_zones(
-                depth_map, frame.shape
-            )
+            zones = depth_analyzer.find_landing_zones(depth_map, frame.shape)
             depth_frame = depth_analyzer.annotate_depth_frame(frame, depth_map, zones)
 
             for z in zones[:5]:
-                lz_gps = get_dummy_gps(seed=z.center_x * 1000 + z.center_y)
-                lz = LandingZone(
-                    lz_id=f"LZ-{frame_index:04d}-{z.center_x}",
-                    timestamp=ts,
-                    center_x=z.center_x,
-                    center_y=z.center_y,
-                    area_px=z.area_px,
-                    safety_score=z.safety_score,
-                    safe=z.safe,
-                    gps_lat=lz_gps[0],
-                    gps_lon=lz_gps[1],
-                    depth_variance=z.depth_variance,
-                )
-                store.add_landing_zone(lz)
+                lz_gps = get_dummy_gps(seed=z.center_x + z.center_y)
 
                 lz_out.append({
-                    "lz_id": lz.lz_id,
+                    "lz_id": f"LZ-{frame_index}-{z.center_x}",
                     "center_x": z.center_x,
                     "center_y": z.center_y,
-                    "area_px": z.area_px,
                     "safety_score": z.safety_score,
-                    "safe": z.safe,
                     "gps_lat": lz_gps[0],
                     "gps_lon": lz_gps[1],
-                    "depth_variance": z.depth_variance,
                 })
 
-    env_out: Dict[str, Any] = {}
-    raw_env_report = None
+    env_out = {}
 
-    if run_heavy_modules:
-        raw_env_report = analyze_environment(frame)
-        annotated_frame = annotate_env_frame(annotated_frame, raw_env_report)
+    if run_heavy:
+        env = analyze_environment(frame)
+        annotated_frame = annotate_env_frame(annotated_frame, env)
+
         env_out = {
-            "visibility_score": raw_env_report.visibility_score,
-            "overall_safety_score": raw_env_report.overall_safety_score,
-            "safety_level": raw_env_report.safety_level,
-            "conditions": raw_env_report.conditions,
-            "recommendations": raw_env_report.recommendations,
+            "visibility_score": env.visibility_score,
+            "safety_level": env.safety_level,
+            "conditions": env.conditions,
         }
 
-    alerts_fired = process_alerts(
+    alerts = process_alerts(
         detections=detections,
-        env_report=raw_env_report,
+        env_report=env if run_heavy else None,
         frame_gps=(gps_lat, gps_lon),
         person_ids=person_ids,
     )
 
-    elapsed = round(time.time() - t0, 3)
-
-    logger.debug(
-        f"Frame {frame_index} processed in {elapsed}s — "
-        f"{len(detections)} persons"
-    )
+    logger.debug(f"Frame {frame_index} processed | persons: {len(detections)}")
 
     return FrameResult(
         frame_index=frame_index,
@@ -284,7 +279,7 @@ def process_frame(
         persons=persons_out,
         landing_zones=lz_out,
         environment=env_out,
-        alerts_fired=alerts_fired,
+        alerts_fired=alerts,
         gps_lat=gps_lat,
         gps_lon=gps_lon,
         person_count=len(detections),

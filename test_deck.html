@@ -133,7 +133,6 @@ ws.onmessage = function(event) {
         document.getElementById("survivorCount").innerText = data.persons.length;
         updateRadar(data.persons); 
         
-        // 🚀 UPDATE THE TRIAGE LEADERBOARD
         const triageBoard = document.getElementById("triageBoard");
         let triageHTML = `<span style="color:#ffaa00; font-weight:bold; padding-top:2px;">LIVE TRIAGE:</span>`;
         
@@ -268,6 +267,40 @@ async function finishMission(){
     await fetch("/api/stream/terminate",{method:"POST"});
     window.open("/api/stream/download_report","_blank");
 }
+
+// 🚀 7. HISTORY & ANALYTICS INTEGRATION (The New Part)
+async function updateMissionIntelligence() {
+    try {
+        // 1. Pehle Count fetch karo
+        const countRes = await fetch('http://127.0.0.1:8000/api/history/count');
+        const countData = await countRes.json();
+        document.getElementById("survivorCount").innerText = countData.count;
+
+        // 2. Fir Logs fetch karo
+        const response = await fetch('http://127.0.0.1:8000/api/history/logs');
+        const logs = await response.json();
+
+        // (Baki ka timeline update wala code niche waisa hi rahega...)
+        const timelineBox = document.getElementById("timelineBox");
+        if (timelineBox && logs.length > 0) {
+            let logsHTML = "";
+            logs.slice(0, 15).forEach(log => {
+                const timeOnly = log.timestamp.split(' ')[1] || log.timestamp;
+                logsHTML += `<div style="color: #00ff00; font-size: 11px; margin-bottom: 2px; border-bottom: 1px solid #111;">
+                    <span style="color: #888;">[${timeOnly}]</span> DETECTED: <b>${log.posture}</b> 
+                </div>`;
+            });
+            timelineBox.innerHTML = logsHTML;
+        }
+    } catch (err) {
+        console.log("Sync Error");
+    }
+}
+
+// Initialize the 2-second loop
+setInterval(updateMissionIntelligence, 2000);
+updateMissionIntelligence(); // Initial call
+
 </script>
 </body>
 </html>
